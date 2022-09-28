@@ -18,6 +18,11 @@ chain(x::Union{Vector{T}, Nothing}, y::Union{Vector{T}, Nothing}, f::Function) w
     y isa Nothing && return x 
     return f(x, y)
 end
+"""Monad bind: Ma, (a->Mb) -> Mb"""
+bind(x::Union{Vector{T}, Nothing}, f::Function) where T = begin
+    x isa Nothing && return x 
+    return f(x)
+end
 
 states(mt::MaybeTensor) = mt.states 
 values(mt::MaybeTensor) = mt.values
@@ -29,13 +34,6 @@ len(mt::MaybeTensor) = len(values(mt))
 len(vs::Vector{T}) where T = length(vs)
 len(n::Nothing) = 0
 
-select(v::Vector{T}, index::Int) where T = Vector{T}([v[index]])
-# select(v::Vector{T}, index::Int) where T = v[index]
-select(v::Nothing, index::Int) = nothing
-
-# select(mt::T, index::Int) where T<:MaybeTensor = begin 
-#     return T(select(states(mt), index), select(values(mt), index))
-# end
 
 struct MaybeRealTensor<:MaybeTensor
     states::Union{Vector{State}, Nothing}
@@ -49,16 +47,28 @@ struct NSTensor{T<:MaybeTensor}<:MaybeTensor
     values::Union{Vector{T}, Nothing}
 end
 
+select(v::Vector{T}, index::Int) where T = Vector{T}([v[index]])
+select(v::Nothing, index::Int) = nothing
+
+select(mt::T, index::Int) where T<:MaybeTensor = begin 
+    return T(select(states(mt), index), select(values(mt), index))
+end
+
+select_element(v::Vector{T}, index::Int) where T = bind(select(v, index), xs->xs[1])
+
+len(ns::NSTensor, dimIndex::Int)::Int = begin 
+    dimIndex==1 && return len(ns)    
+    return len(select_element(values(ns), 1), dimIndex-1)
+end
 
 transpose(ns::NSTensor{NSTensor{T}}) where T = begin 
-    inner_len = len(values(ns)[1])
+    inner_len = len(ns, 2)
     v = map(1:inner_len) do i 
-        ins = map(1:len(ns)) do j 
-            nns = select(values(ns), j)[1]
-            return NSTensor(select(states(nns), i), select(values(nns), i))
+        return map(1:len(ns)) do j 
+            return select(select_element(values(ns), j), i)
         end |> concat
     end
-    return NSTensor(states(values(ns)[1]), v)
+    return NSTensor(states(select_element(values(ns), 1)), v)
 end
 
 
@@ -73,3 +83,5 @@ typeof(nns)
 toArray(nns) |> display
 # len(nns)
 toArray(transpose(nns)) |> display
+
+@show len(nns, 1), len(nns, 2)

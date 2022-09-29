@@ -55,21 +55,67 @@ select(mt::T, index::Int) where T<:MaybeTensor = begin
 end
 
 select_element(v::Vector{T}, index::Int) where T = bind(select(v, index), xs->xs[1])
-
+select_value(ns::NSTensor, index::Int) = select_element(values(ns), index)
 len(ns::NSTensor, dimIndex::Int)::Int = begin 
     dimIndex==1 && return len(ns)    
     return len(select_element(values(ns), 1), dimIndex-1)
 end
 
+size!(ns::MaybeTensor, svec::Vector{Int}) = begin 
+    push!(svec, len(ns))
+    ns isa MaybeRealTensor && return svec
+    size!(select_value(ns, 1), svec)
+end
+size(ns::NSTensor)::Tuple = Tuple(size!(ns, Int[]))
+
 transpose(ns::NSTensor{NSTensor{T}}) where T = begin 
     inner_len = len(ns, 2)
     v = map(1:inner_len) do i 
         return map(1:len(ns)) do j 
-            return select(select_element(values(ns), j), i)
+            return select(select_value(ns, j), i)
         end |> concat
     end
-    return NSTensor(states(select_element(values(ns), 1)), v)
+    return NSTensor(states(select_value(ns, 1)), v)
 end
+
+transpose(ns::NSTensor, startIndex::Int) = begin 
+    startIndex==1 && return transpose(ns)
+    v = map(1:len(ns)) do i 
+        return transpose(select_value(ns, i), startIndex-1)
+    end 
+    return NSTensor(states(ns), v)
+end
+
+
+
+
+struct StartIndex 
+    index::Int
+end
+
+"""
+    (1, 2, 3) -> (2, 3, 1) -> (1, 2), (2, 3)
+    (1, 2, 3) -> (3, 1, 2) -> (2, 3), (1, 2)
+    (1, 2, 3) -> (3, 2, 1) -> (1, 2), (2, 3), (1, 2)
+"""
+transpose_schedule(orders::Vector{Int}, schedule::Vector{StartIndex}) = begin
+    len(orders)==0 && return schedule
+    o, os = orders[end], orders[1:end-1]    
+    schedule = schedule ++ map(StartIndex, o:len(orders)-1)
+
+    len(os)==0 && return schedule
+
+    nos = map(os) do oi 
+        oi > o && return oi -1 
+        oi < o && return oi
+    end
+    transpose_schedule(nos, schedule)
+end
+transpose_schedule(orders::Vector{Int}) = transpose_schedule(orders, StartIndex[])
+
+
+transpose(ns::NSTensor, schedule::Vector{StartIndex})::NSTensor = foldl((ns, s)->transpose(ns, s.index), schedule; init=ns)
+transpose(ns::NSTensor, targetVec::Vector{Int})::NSTensor = transpose(ns, transpose_schedule(targetVec))
 
 
 state_vec = map(State, 1:3)
@@ -85,3 +131,13 @@ toArray(nns) |> display
 toArray(transpose(nns)) |> display
 
 @show len(nns, 1), len(nns, 2)
+
+nnns = NSTensor(map(State, 1:2), [nns, nns])
+@show size(nnns)
+tnnns = transpose(nnns, 2)
+@show size(tnnns)
+
+# @show transpose_schedule([3,2,1])
+# @show transpose_schedule([2, 3, 1])
+tnnns = transpose(nnns, [3,2,1])
+@show size(tnnns)

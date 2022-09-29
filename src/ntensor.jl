@@ -141,54 +141,48 @@ op_apply(op::Function, nsa::NSTensor, nsb::NSTensor) = begin
     return bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
 end
 
-# nproduct(nsa::MaybeRealTensor, nsb::MaybeRealTensor) = op_apply(.*, nsa, nsb)
-# nproduct(nsa::MaybeRealTensor, b::Real) = op_apply(.*, nsa, b)
 
-nproduct(nsa::MaybeRealTensor, b::Union{MaybeRealTensor, Real}) = op_apply(.*, nsa, b)
-nproduct(nsa::NSTensor, b::Union{MaybeRealTensor, Real, NSTensor}) = op_apply(nproduct, nsa, b)
+const MRT_R = Union{MaybeRealTensor, Real}
+const MRT_R_NST = Union{MaybeRealTensor, Real, NSTensor}
+const MRT_NST = Union{NSTensor, MaybeRealTensor}
 
-# nproduct(nsa::NSTensor, mrb::MaybeRealTensor) = op_apply(nproduct, nsa, mrb)
-# nproduct(nsa::NSTensor, b::Real) = op_apply(nproduct, nsa, b)
-# nproduct(nsa::NSTensor, nsb::NSTensor) = op_apply(nproduct, nsa, nsb)
+const LowLevelApplyOp = Tuple{MaybeRealTensor, Union{MaybeRealTensor, 
+                                                     Real}}
 
-nproduct(mrb::MaybeRealTensor, nsa::NSTensor) = nproduct(nsa, mrb)
-nproduct(b::Real, nsa::NSTensor) = nproduct(nsa, b)
-nproduct(b::Real, nsa::MaybeRealTensor) = nproduct(nsa, b)
+const ApplyOp = Tuple{NSTensor, Union{MaybeRealTensor, 
+                                      Real, 
+                                      NSTensor}}
 
+const ToReverse = Union{Tuple{Real, Union{NSTensor, 
+                                          MaybeRealTensor}}, 
+                        Tuple{MaybeRealTensor, NSTensor}}
+# nproduct(nsa::MaybeRealTensor, b::MRT_R) = op_apply(.*, nsa, b)
+# nproduct(nsa::NSTensor, b::MRT_R_NST) = op_apply(nproduct, nsa, b)
 
-
-# nsum(nsa::MaybeRealTensor, nsb::MaybeRealTensor) = op_apply(.+, nsa, nsb)
-# nsum(nsa::MaybeRealTensor, b::Real) = op_apply(.+, nsa, b)
-
-nsum(nsa::MaybeRealTensor, b::Union{MaybeRealTensor, Real}) = op_apply(.+, nsa, b)
-nsum(nsa::NSTensor, b::Union{MaybeRealTensor, Real, NSTensor}) = op_apply(nsum, nsa, b)
-# nsum(nsa::NSTensor, mrb::MaybeRealTensor) = op_apply(nsum, nsa, mrb)
-# nsum(nsa::NSTensor, b::Real) = op_apply(nsum, nsa, b)
-# nsum(nsa::NSTensor, nsb::NSTensor) = op_apply(nsum, nsa, nsb)
-
-nsum(mrb::MaybeRealTensor, nsa::NSTensor) = nsum(nsa, mrb)
-nsum(b::Real, nsa::NSTensor) = nsum(nsa, b)
-nsum(b::Real, nsa::MaybeRealTensor) = nsum(nsa, b)
-
-
-
-# nproduct(nsa::MaybeRealTensor, nsb::MaybeRealTensor) = MaybeRealTensor(states(nsa), chain(values(nsa), values(nsb), .*))
-
-# nproduct(nsa::NSTensor, mrb::MaybeRealTensor) = bind(nsa, (ns, i)->nproduct(ns, element(mrb)))
 # nproduct(mrb::MaybeRealTensor, nsa::NSTensor) = nproduct(nsa, mrb)
+# nproduct(b::Real, nsa::MRT_NST) = nproduct(nsa, b)
 
-# nproduct(nsa::NSTensor, b::Real) = bind(nsa, (ns, i)->nproduct(ns, b))
-# nproduct(b::Real, nsa::NSTensor) = nproduct(nsa, b)
+using MLStyle
+nproduct(a, b) = @match (a, b) begin 
+    (nsa, b)::LowLevelApplyOp => op_apply(.*, nsa, b);
+    (nsa, b)::ApplyOp         => op_apply(nproduct, nsa, b);
+    (b, nsa)::ToReverse       => nproduct(nsa, b)
+end
 
-# nproduct(nsa::MaybeRealTensor, b::Real) = MaybeRealTensor(states(nsa), bind(values(nsa), x->x.*b))
-# nproduct(b::Real, nsa::MaybeRealTensor) = nproduct(nsa, b)
 
-# nproduct(nsa::NSTensor, nsb::NSTensor) = begin 
-#     @assert states(nsa)==states(nsb)
-#     return bind(nsa, (ns, i)->nproduct(ns, select_value(nsb, i)))
-# end
+# nsum(nsa::MaybeRealTensor, b::MRT_R) = op_apply(.+, nsa, b)
+# nsum(nsa::NSTensor, b::MRT_R_NST) = op_apply(nsum, nsa, b)
 
-nreduce(nsa::NSTensor) = begin
+# nsum(mrb::MaybeRealTensor, nsa::NSTensor) = nsum(nsa, mrb)
+# nsum(b::Real, nsa::MRT_NST) = nsum(nsa, b)
+nsum(a, b) = @match (a, b) begin 
+    (nsa, b)::LowLevelApplyOp => op_apply(.+, nsa, b);
+    (nsa, b)::ApplyOp         => op_apply(nsum, nsa, b);
+    (b, nsa)::ToReverse       => nsum(nsa, b)
+end
+
+
+nreduce(nsa::NSTensor, ob::Function) = begin
     
 end
 

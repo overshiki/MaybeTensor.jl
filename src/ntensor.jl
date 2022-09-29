@@ -40,7 +40,13 @@ struct MaybeRealTensor<:MaybeTensor
     values::Union{Vector{Real}, Nothing}
 end
 toArray(mt::MaybeRealTensor) = values(mt)
-
+element(mt::MaybeRealTensor) = begin
+    f(x::Vector{Real}) = begin 
+        @assert len(x)==1
+        return x[1]
+    end
+    return bind(values(mt), f)
+end
 
 struct NSTensor{T<:MaybeTensor}<:MaybeTensor
     states::Union{Vector{State}, Nothing}
@@ -117,6 +123,45 @@ transpose_schedule(orders::Vector{Int}) = transpose_schedule(orders, StartIndex[
 transpose(ns::NSTensor, schedule::Vector{StartIndex})::NSTensor = foldl((ns, s)->transpose(ns, s.index), schedule; init=ns)
 transpose(ns::NSTensor, targetVec::Vector{Int})::NSTensor = transpose(ns, transpose_schedule(targetVec))
 
+nproduct(nsa::MaybeRealTensor, nsb::MaybeRealTensor) = MaybeRealTensor(states(nsa), chain(values(nsa), values(nsb), .*))
+# nproduct(nsa::NSTensor{T}, nsb::NSTensor{T}) where T = begin 
+#     @assert states(nsa)==states(nsb)
+#     v = map(1:len(nsa)) do i 
+#         return nproduct(select_value(nsa, i), select_value(nsb, i))
+#     end
+#     return NSTensor(states(nsa), v)
+# end
+nproduct(nsa::NSTensor, mrb::MaybeRealTensor) = begin 
+    v = map(1:len(nsa)) do i 
+        return nproduct(select_value(nsa, i), element(mrb))
+    end
+    return NSTensor(states(nsa), v)
+end
+nproduct(mrb::MaybeRealTensor, nsa::NSTensor) = nproduct(nsa, mrb)
+
+
+nproduct(nsa::NSTensor, b::Real) = begin 
+    v = map(1:len(nsa)) do i 
+        return nproduct(select_value(nsa, i), b)
+    end
+    return NSTensor(states(nsa), v)
+end
+nproduct(b::Real, nsa::NSTensor) = nproduct(nsa, b)
+
+nproduct(nsa::MaybeRealTensor, b::Real) = MaybeRealTensor(states(nsa), bind(values(nsa), x->x.*b))
+nproduct(b::Real, nsa::MaybeRealTensor) = nproduct(nsa, b)
+
+nproduct(nsa::NSTensor, nsb::NSTensor) = begin 
+    @assert states(nsa)==states(nsb)
+    v = map(1:len(nsa)) do i 
+        return nproduct(select_value(nsa, i), select_value(nsb, i))
+    end
+    return NSTensor(states(nsa), v)
+end
+
+
+
+
 
 state_vec = map(State, 1:3)
 r_vec = map(x->MaybeRealTensor(nothing, [x]), 1:3)
@@ -141,3 +186,9 @@ tnnns = transpose(nnns, 2)
 # @show transpose_schedule([2, 3, 1])
 tnnns = transpose(nnns, [3,2,1])
 @show size(tnnns)
+
+nns |> toArray |> display
+nproduct(nns, nns) |> toArray |> display
+
+nproduct(nns, 3) |> toArray |> display
+nproduct(nns, MaybeRealTensor(nothing, [3])) |> toArray |> display

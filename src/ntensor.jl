@@ -123,14 +123,6 @@ transpose_schedule(orders::Vector{Int}) = transpose_schedule(orders, StartIndex[
 transpose(ns::NSTensor, schedule::Vector{StartIndex})::NSTensor = foldl((ns, s)->transpose(ns, s.index), schedule; init=ns)
 transpose(ns::NSTensor, targetVec::Vector{Int})::NSTensor = transpose(ns, transpose_schedule(targetVec))
 
-nproduct(nsa::MaybeRealTensor, nsb::MaybeRealTensor) = MaybeRealTensor(states(nsa), chain(values(nsa), values(nsb), .*))
-# nproduct(nsa::NSTensor{T}, nsb::NSTensor{T}) where T = begin 
-#     @assert states(nsa)==states(nsb)
-#     v = map(1:len(nsa)) do i 
-#         return nproduct(select_value(nsa, i), select_value(nsb, i))
-#     end
-#     return NSTensor(states(nsa), v)
-# end
 
 """Monad bind: Ma, (a->Mb) -> Mb"""
 bind(nsa::NSTensor, f::Function) = begin 
@@ -140,51 +132,65 @@ bind(nsa::NSTensor, f::Function) = begin
     return NSTensor(states(nsa), v) 
 end
 
-nproduct(nsa::NSTensor, mrb, f::Function) = begin 
-    v = map(1:len(nsa)) do i 
-        return nproduct(select_value(nsa, i), f(mrb, i))
-    end
-    return NSTensor(states(nsa), v)
+op_apply(op::Function, nsa::NSTensor, mrb::MaybeRealTensor) = bind(nsa, (ns, i)->op(ns, element(mrb)))
+op_apply(op::Function, nsa::NSTensor, b::Real) = bind(nsa, (ns, i)->op(ns, b))
+op_apply(bop::Function, nsa::MaybeRealTensor, b::Real) = MaybeRealTensor(states(nsa), bind(values(nsa), x->bop(x, b)))
+op_apply(bop::Function, nsa::MaybeRealTensor, nsb::MaybeRealTensor) = MaybeRealTensor(states(nsa), chain(values(nsa), values(nsb), bop))
+op_apply(op::Function, nsa::NSTensor, nsb::NSTensor) = begin 
+    @assert states(nsa)==states(nsb)
+    return bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
 end
 
-nproduct(nsa::NSTensor, mrb::MaybeRealTensor) = begin 
-    f(ns, i) = nproduct(ns, element(mrb))
-    return bind(nsa, f)
-    # v = map(1:len(nsa)) do i 
-    #     return nproduct(select_value(nsa, i), element(mrb))
-    # end
-    # return NSTensor(states(nsa), v)
-    # return nproduct(nsa, mrb, (mrb, i)->element(mrb))
-end
+# nproduct(nsa::MaybeRealTensor, nsb::MaybeRealTensor) = op_apply(.*, nsa, nsb)
+# nproduct(nsa::MaybeRealTensor, b::Real) = op_apply(.*, nsa, b)
+
+nproduct(nsa::MaybeRealTensor, b::Union{MaybeRealTensor, Real}) = op_apply(.*, nsa, b)
+nproduct(nsa::NSTensor, b::Union{MaybeRealTensor, Real, NSTensor}) = op_apply(nproduct, nsa, b)
+
+# nproduct(nsa::NSTensor, mrb::MaybeRealTensor) = op_apply(nproduct, nsa, mrb)
+# nproduct(nsa::NSTensor, b::Real) = op_apply(nproduct, nsa, b)
+# nproduct(nsa::NSTensor, nsb::NSTensor) = op_apply(nproduct, nsa, nsb)
+
 nproduct(mrb::MaybeRealTensor, nsa::NSTensor) = nproduct(nsa, mrb)
-
-
-nproduct(nsa::NSTensor, b::Real) = begin 
-    f(ns, i) = nproduct(ns, b)
-    return bind(nsa, f)
-    # v = map(1:len(nsa)) do i 
-    #     return nproduct(select_value(nsa, i), b)
-    # end
-    # return NSTensor(states(nsa), v)
-    # return nproduct(nsa, b, (x, i)->x)
-end
 nproduct(b::Real, nsa::NSTensor) = nproduct(nsa, b)
-
-nproduct(nsa::MaybeRealTensor, b::Real) = MaybeRealTensor(states(nsa), bind(values(nsa), x->x.*b))
 nproduct(b::Real, nsa::MaybeRealTensor) = nproduct(nsa, b)
 
-nproduct(nsa::NSTensor, nsb::NSTensor) = begin 
-    @assert states(nsa)==states(nsb)
-    f(ns, i) = nproduct(ns, select_value(nsb, i))
-    return bind(nsa, f)
 
-    # v = map(1:len(nsa)) do i 
-    #     return nproduct(select_value(nsa, i), select_value(nsb, i))
-    # end
-    # return NSTensor(states(nsa), v)
-    # return nproduct(nsa, nsb, (nsb, i)->select_value(nsb, i))
+
+# nsum(nsa::MaybeRealTensor, nsb::MaybeRealTensor) = op_apply(.+, nsa, nsb)
+# nsum(nsa::MaybeRealTensor, b::Real) = op_apply(.+, nsa, b)
+
+nsum(nsa::MaybeRealTensor, b::Union{MaybeRealTensor, Real}) = op_apply(.+, nsa, b)
+nsum(nsa::NSTensor, b::Union{MaybeRealTensor, Real, NSTensor}) = op_apply(nsum, nsa, b)
+# nsum(nsa::NSTensor, mrb::MaybeRealTensor) = op_apply(nsum, nsa, mrb)
+# nsum(nsa::NSTensor, b::Real) = op_apply(nsum, nsa, b)
+# nsum(nsa::NSTensor, nsb::NSTensor) = op_apply(nsum, nsa, nsb)
+
+nsum(mrb::MaybeRealTensor, nsa::NSTensor) = nsum(nsa, mrb)
+nsum(b::Real, nsa::NSTensor) = nsum(nsa, b)
+nsum(b::Real, nsa::MaybeRealTensor) = nsum(nsa, b)
+
+
+
+# nproduct(nsa::MaybeRealTensor, nsb::MaybeRealTensor) = MaybeRealTensor(states(nsa), chain(values(nsa), values(nsb), .*))
+
+# nproduct(nsa::NSTensor, mrb::MaybeRealTensor) = bind(nsa, (ns, i)->nproduct(ns, element(mrb)))
+# nproduct(mrb::MaybeRealTensor, nsa::NSTensor) = nproduct(nsa, mrb)
+
+# nproduct(nsa::NSTensor, b::Real) = bind(nsa, (ns, i)->nproduct(ns, b))
+# nproduct(b::Real, nsa::NSTensor) = nproduct(nsa, b)
+
+# nproduct(nsa::MaybeRealTensor, b::Real) = MaybeRealTensor(states(nsa), bind(values(nsa), x->x.*b))
+# nproduct(b::Real, nsa::MaybeRealTensor) = nproduct(nsa, b)
+
+# nproduct(nsa::NSTensor, nsb::NSTensor) = begin 
+#     @assert states(nsa)==states(nsb)
+#     return bind(nsa, (ns, i)->nproduct(ns, select_value(nsb, i)))
+# end
+
+nreduce(nsa::NSTensor) = begin
+    
 end
-
 
 sum_product(nsa::NSTensor, nsb::NSTensor) = begin 
 
@@ -220,3 +226,5 @@ nproduct(nns, nns) |> toArray |> display
 
 nproduct(nns, 3) |> toArray |> display
 nproduct(nns, MaybeRealTensor(nothing, [3])) |> toArray |> display
+
+nsum(nns, MaybeRealTensor(nothing, [3])) |> toArray |> display

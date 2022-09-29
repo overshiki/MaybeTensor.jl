@@ -131,20 +131,42 @@ nproduct(nsa::MaybeRealTensor, nsb::MaybeRealTensor) = MaybeRealTensor(states(ns
 #     end
 #     return NSTensor(states(nsa), v)
 # end
-nproduct(nsa::NSTensor, mrb::MaybeRealTensor) = begin 
+
+"""Monad bind: Ma, (a->Mb) -> Mb"""
+bind(nsa::NSTensor, f::Function) = begin 
     v = map(1:len(nsa)) do i 
-        return nproduct(select_value(nsa, i), element(mrb))
+        return f(select_value(nsa, i), i)
+    end
+    return NSTensor(states(nsa), v) 
+end
+
+nproduct(nsa::NSTensor, mrb, f::Function) = begin 
+    v = map(1:len(nsa)) do i 
+        return nproduct(select_value(nsa, i), f(mrb, i))
     end
     return NSTensor(states(nsa), v)
+end
+
+nproduct(nsa::NSTensor, mrb::MaybeRealTensor) = begin 
+    f(ns, i) = nproduct(ns, element(mrb))
+    return bind(nsa, f)
+    # v = map(1:len(nsa)) do i 
+    #     return nproduct(select_value(nsa, i), element(mrb))
+    # end
+    # return NSTensor(states(nsa), v)
+    # return nproduct(nsa, mrb, (mrb, i)->element(mrb))
 end
 nproduct(mrb::MaybeRealTensor, nsa::NSTensor) = nproduct(nsa, mrb)
 
 
 nproduct(nsa::NSTensor, b::Real) = begin 
-    v = map(1:len(nsa)) do i 
-        return nproduct(select_value(nsa, i), b)
-    end
-    return NSTensor(states(nsa), v)
+    f(ns, i) = nproduct(ns, b)
+    return bind(nsa, f)
+    # v = map(1:len(nsa)) do i 
+    #     return nproduct(select_value(nsa, i), b)
+    # end
+    # return NSTensor(states(nsa), v)
+    # return nproduct(nsa, b, (x, i)->x)
 end
 nproduct(b::Real, nsa::NSTensor) = nproduct(nsa, b)
 
@@ -153,14 +175,20 @@ nproduct(b::Real, nsa::MaybeRealTensor) = nproduct(nsa, b)
 
 nproduct(nsa::NSTensor, nsb::NSTensor) = begin 
     @assert states(nsa)==states(nsb)
-    v = map(1:len(nsa)) do i 
-        return nproduct(select_value(nsa, i), select_value(nsb, i))
-    end
-    return NSTensor(states(nsa), v)
+    f(ns, i) = nproduct(ns, select_value(nsb, i))
+    return bind(nsa, f)
+
+    # v = map(1:len(nsa)) do i 
+    #     return nproduct(select_value(nsa, i), select_value(nsb, i))
+    # end
+    # return NSTensor(states(nsa), v)
+    # return nproduct(nsa, nsb, (nsb, i)->select_value(nsb, i))
 end
 
 
+sum_product(nsa::NSTensor, nsb::NSTensor) = begin 
 
+end
 
 
 state_vec = map(State, 1:3)

@@ -1,3 +1,4 @@
+using MLStyle
 
 abstract type MaybeTensor end
 
@@ -26,7 +27,9 @@ end
 
 states(mt::MaybeTensor) = mt.states 
 values(mt::MaybeTensor) = mt.values
-(++)(ar::T, br::T) where T<:MaybeTensor = T(chain(states(ar), states(br), ++), chain(values(ar), values(br), ++))
+(++)(ar::T, br::T) where T<:MaybeTensor = begin
+    return T(chain(states(ar), states(br), ++), chain(values(ar), values(br), ++))
+end
 concat(alist::Vector{T}) where T<:MaybeTensor = foldl(++, alist; init=T(nothing, nothing))
 toArray(mt::MaybeTensor) = map(toArray, values(mt))
 
@@ -62,17 +65,23 @@ end
 
 select_element(v::Vector{T}, index::Int) where T = bind(select(v, index), xs->xs[1])
 select_value(ns::NSTensor, index::Int) = select_element(values(ns), index)
+prob_value(ns::NSTensor) = select_value(ns, 1)
+
 len(ns::NSTensor, dimIndex::Int)::Int = begin 
     dimIndex==1 && return len(ns)    
     return len(select_element(values(ns), 1), dimIndex-1)
 end
 
+len(ns, dimIndex) = @match (ns, dimIndex) begin 
+    (ns::MaybeRealTensor, 1) => len(ns);
+end
+
 size!(ns::MaybeTensor, svec::Vector{Int}) = begin 
     push!(svec, len(ns))
     ns isa MaybeRealTensor && return svec
-    size!(select_value(ns, 1), svec)
+    size!(prob_value(ns), svec)
 end
-size(ns::NSTensor)::Tuple = Tuple(size!(ns, Int[]))
+size(ns::MaybeTensor)::Tuple = Tuple(size!(ns, Int[]))
 
 transpose(ns::NSTensor{NSTensor{T}}) where T = begin 
     inner_len = len(ns, 2)
@@ -81,7 +90,7 @@ transpose(ns::NSTensor{NSTensor{T}}) where T = begin
             return select(select_value(ns, j), i)
         end |> concat
     end
-    return NSTensor(states(select_value(ns, 1)), v)
+    return NSTensor(states(prob_value(ns)), v)
 end
 
 transpose(ns::NSTensor, startIndex::Int) = begin 
@@ -120,8 +129,12 @@ end
 transpose_schedule(orders::Vector{Int}) = transpose_schedule(orders, StartIndex[])
 
 
-transpose(ns::NSTensor, schedule::Vector{StartIndex})::NSTensor = foldl((ns, s)->transpose(ns, s.index), schedule; init=ns)
-transpose(ns::NSTensor, targetVec::Vector{Int})::NSTensor = transpose(ns, transpose_schedule(targetVec))
+transpose(ns::NSTensor, schedule::Vector{StartIndex})::NSTensor = begin
+    return foldl((ns, s)->transpose(ns, s.index), schedule; init=ns)
+end
+transpose(ns::NSTensor, targetVec::Vector{Int})::NSTensor = begin
+    return transpose(ns, transpose_schedule(targetVec))
+end
 
 
 """Monad bind: Ma, (a->Mb) -> Mb"""
@@ -129,22 +142,33 @@ bind(nsa::NSTensor, f::Function) = begin
     v = map(1:len(nsa)) do i 
         return f(select_value(nsa, i), i)
     end
+    if len(v)==0
+        v = nothing 
+    end
     return NSTensor(states(nsa), v) 
 end
+bind(mrt::MaybeRealTensor, f::Function) = MaybeRealTensor(states(mrt), bind(values(mrt), f))
+chain(msa::MaybeRealTensor, msb::MaybeRealTensor, f::Function) = begin
+    return MaybeRealTensor(states(msa), chain(values(msa), values(msb), f));
+end 
 
-op_apply(op::Function, nsa::NSTensor, mrb::MaybeRealTensor) = bind(nsa, (ns, i)->op(ns, element(mrb)))
-op_apply(op::Function, nsa::NSTensor, b::Real) = bind(nsa, (ns, i)->op(ns, b))
-op_apply(bop::Function, nsa::MaybeRealTensor, b::Real) = MaybeRealTensor(states(nsa), bind(values(nsa), x->bop(x, b)))
-op_apply(bop::Function, nsa::MaybeRealTensor, nsb::MaybeRealTensor) = MaybeRealTensor(states(nsa), chain(values(nsa), values(nsb), bop))
-op_apply(op::Function, nsa::NSTensor, nsb::NSTensor) = begin 
-    @assert states(nsa)==states(nsb)
-    return bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
+const ApplyElement      = Tuple{Function, NSTensor, MaybeRealTensor}
+const ApplySkip         = Tuple{Function, NSTensor, Real}
+const ApplySelectValue  = Tuple{Function, NSTensor, NSTensor}
+const ApplyBindOp       = Tuple{Function, MaybeRealTensor, Real}
+const ApplyChainOp      = Tuple{Function, MaybeRealTensor, MaybeRealTensor}
+
+op_apply(a, b, c) = @match (a, b, c) begin
+    (op, nsa, mrb)::ApplyElement     => bind(nsa, (ns, i)->op(ns, element(mrb)));
+    (op, nsa, b)::ApplySkip          => bind(nsa, (ns, i)->op(ns, b));
+    (bop, nsa, b)::ApplyBindOp       => bind(nsa, x->bop(x, b));
+    (bop, nsa, nsb)::ApplyChainOp    => chain(nsa, nsb, bop);
+    (op, nsa, nsb)::ApplySelectValue => begin 
+                                            @assert states(nsa)==states(nsb)
+                                            return bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
+                                        end
 end
 
-
-const MRT_R = Union{MaybeRealTensor, Real}
-const MRT_R_NST = Union{MaybeRealTensor, Real, NSTensor}
-const MRT_NST = Union{NSTensor, MaybeRealTensor}
 
 const LowLevelApplyOp = Tuple{MaybeRealTensor, Union{MaybeRealTensor, 
                                                      Real}}
@@ -153,72 +177,52 @@ const ApplyOp = Tuple{NSTensor, Union{MaybeRealTensor,
                                       Real, 
                                       NSTensor}}
 
-const ToReverse = Union{Tuple{Real, Union{NSTensor, 
+const ToPermute = Union{Tuple{Real, Union{NSTensor, 
                                           MaybeRealTensor}}, 
                         Tuple{MaybeRealTensor, NSTensor}}
-# nproduct(nsa::MaybeRealTensor, b::MRT_R) = op_apply(.*, nsa, b)
-# nproduct(nsa::NSTensor, b::MRT_R_NST) = op_apply(nproduct, nsa, b)
 
-# nproduct(mrb::MaybeRealTensor, nsa::NSTensor) = nproduct(nsa, mrb)
-# nproduct(b::Real, nsa::MRT_NST) = nproduct(nsa, b)
 
-using MLStyle
 nproduct(a, b) = @match (a, b) begin 
     (nsa, b)::LowLevelApplyOp => op_apply(.*, nsa, b);
     (nsa, b)::ApplyOp         => op_apply(nproduct, nsa, b);
-    (b, nsa)::ToReverse       => nproduct(nsa, b)
+    (b, nsa)::ToPermute       => nproduct(nsa, b);
+    (nsa::MaybeRealTensor, b::Nothing) => nsa;
+    (b::Nothing, nsa::MaybeRealTensor) => nsa;
 end
 
 
-# nsum(nsa::MaybeRealTensor, b::MRT_R) = op_apply(.+, nsa, b)
-# nsum(nsa::NSTensor, b::MRT_R_NST) = op_apply(nsum, nsa, b)
-
-# nsum(mrb::MaybeRealTensor, nsa::NSTensor) = nsum(nsa, mrb)
-# nsum(b::Real, nsa::MRT_NST) = nsum(nsa, b)
 nsum(a, b) = @match (a, b) begin 
     (nsa, b)::LowLevelApplyOp => op_apply(.+, nsa, b);
     (nsa, b)::ApplyOp         => op_apply(nsum, nsa, b);
-    (b, nsa)::ToReverse       => nsum(nsa, b)
+    (b, nsa)::ToPermute       => nsum(nsa, b);
+    (nsa::MaybeRealTensor, b::Nothing) => nsa;
+    (b::Nothing, nsa::MaybeRealTensor) => nsa;
 end
 
 
-nreduce(nsa::NSTensor, ob::Function) = begin
-    
+Empty(::MaybeRealTensor) = MaybeRealTensor(nothing, nothing)
+Empty(sv::NSTensor)::NSTensor = begin 
+    return NSTensor(states(sv), map(x->MaybeRealTensor(nothing, nothing), 1:len(sv)))
 end
 
-sum_product(nsa::NSTensor, nsb::NSTensor) = begin 
+nreduce(nsa::NSTensor, ob::Function) = foldl(ob, values(nsa); init=Empty(prob_value(nsa)))
+sum_reduce(nsa::NSTensor) = nreduce(nsa, nsum)
 
+sum_product(nsa::NSTensor, nsb::NSTensor) = sum_reduce(nproduct(nsa, nsb))
+
+
+default_NSTensor(num::Int) = begin 
+    state_vec = map(State, 1:num)
+    r_vec = map(x->MaybeRealTensor(nothing, [x]), 1:num)
+    return NSTensor(state_vec, r_vec)
 end
 
+default_NSTensor(ns::NSTensor, num::Int) = begin
+    state_vec = map(State, 1:num)
+    r_vec = map(x->ns, 1:num)
+    return NSTensor(state_vec, r_vec)
+end
 
-state_vec = map(State, 1:3)
-r_vec = map(x->MaybeRealTensor(nothing, [x]), 1:3)
-ns = NSTensor(state_vec, r_vec)
-nns = NSTensor(map(State, 1:2), [ns, ns])
+disArray(x::MaybeTensor) = x |> toArray |> display
 
-nns ++ nns
-concat([nns, nns])
-typeof(nns)
-toArray(nns) |> display
-# len(nns)
-toArray(transpose(nns)) |> display
 
-@show len(nns, 1), len(nns, 2)
-
-nnns = NSTensor(map(State, 1:2), [nns, nns])
-@show size(nnns)
-tnnns = transpose(nnns, 2)
-@show size(tnnns)
-
-# @show transpose_schedule([3,2,1])
-# @show transpose_schedule([2, 3, 1])
-tnnns = transpose(nnns, [3,2,1])
-@show size(tnnns)
-
-nns |> toArray |> display
-nproduct(nns, nns) |> toArray |> display
-
-nproduct(nns, 3) |> toArray |> display
-nproduct(nns, MaybeRealTensor(nothing, [3])) |> toArray |> display
-
-nsum(nns, MaybeRealTensor(nothing, [3])) |> toArray |> display

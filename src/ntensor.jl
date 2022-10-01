@@ -82,6 +82,7 @@ size!(ns::MaybeTensor, svec::Vector{Int}) = begin
     size!(prob_value(ns), svec)
 end
 size(ns::MaybeTensor)::Tuple = Tuple(size!(ns, Int[]))
+dim(ns::MaybeTensor)::Int = length(size(ns))
 
 transpose(ns::NSTensor{NSTensor{T}}) where T = begin 
     inner_len = len(ns, 2)
@@ -90,6 +91,7 @@ transpose(ns::NSTensor{NSTensor{T}}) where T = begin
             return select(select_value(ns, j), i)
         end |> concat
     end
+    @show states(prob_value(ns))
     return NSTensor(states(prob_value(ns)), v)
 end
 
@@ -209,6 +211,19 @@ nreduce(nsa::NSTensor, ob::Function) = foldl(ob, values(nsa); init=Empty(prob_va
 sum_reduce(nsa::NSTensor) = nreduce(nsa, nsum)
 
 sum_product(nsa::NSTensor, nsb::NSTensor) = sum_reduce(nproduct(nsa, nsb))
+
+prepare_einsum(nsa::NSTensor, insa::Int) = begin 
+    schedule = collect(1:dim(nsa))
+    target = ([insa] ++ schedule[1:insa-1]) ++ schedule[insa+1:end]
+    @show target
+    nsa = transpose(nsa, target)
+    @show size(nsa)
+    @show states(nsa)
+    return nsa
+end
+einsum(nsa::NSTensor, nsb::NSTensor, insa::Int, insb::Int)::NSTensor = begin 
+    return sum_product(prepare_einsum(nsa, insa), prepare_einsum(nsb, insb))
+end
 
 
 default_NSTensor(num::Int) = begin 

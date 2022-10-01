@@ -1,11 +1,8 @@
 using MLStyle
 
 abstract type MaybeTensor end
+abstract type MaybeLeafTensor <: MaybeTensor end
 
-struct State 
-    id::Symbol
-end
-State(x::Union{Int, String}) = State(Symbol(x))
 (++)(xlist::Vector{T}, ylist::Vector{T}) where T = begin 
     clist = T[]
     append!(clist, xlist)
@@ -25,12 +22,11 @@ bind(x::Union{Vector{T}, Nothing}, f::Function) where T = begin
     return f(x)
 end
 
-states(mt::MaybeTensor) = mt.states 
 values(mt::MaybeTensor) = mt.values
 (++)(ar::T, br::T) where T<:MaybeTensor = begin
-    return T(chain(states(ar), states(br), ++), chain(values(ar), values(br), ++))
+    return T(chain(values(ar), values(br), ++))
 end
-concat(alist::Vector{T}) where T<:MaybeTensor = foldl(++, alist; init=T(nothing, nothing))
+concat(alist::Vector{T}) where T<:MaybeTensor = foldl(++, alist; init=T(nothing))
 toArray(mt::MaybeTensor) = map(toArray, values(mt))
 
 len(mt::MaybeTensor) = len(values(mt))
@@ -38,8 +34,7 @@ len(vs::Vector{T}) where T = length(vs)
 len(n::Nothing) = 0
 
 
-struct MaybeRealTensor<:MaybeTensor
-    states::Union{Vector{State}, Nothing}
+struct MaybeRealTensor<:MaybeLeafTensor
     values::Union{Vector{Real}, Nothing}
 end
 toArray(mt::MaybeRealTensor) = values(mt)
@@ -52,7 +47,6 @@ element(mt::MaybeRealTensor) = begin
 end
 
 struct NSTensor{T<:MaybeTensor}<:MaybeTensor
-    states::Union{Vector{State}, Nothing}
     values::Union{Vector{T}, Nothing}
 end
 
@@ -60,11 +54,12 @@ select(v::Vector{T}, index::Int) where T = Vector{T}([v[index]])
 select(v::Nothing, index::Int) = nothing
 
 select(mt::T, index::Int) where T<:MaybeTensor = begin 
-    return T(select(states(mt), index), select(values(mt), index))
+    return T(select(values(mt), index))
 end
 
 select_element(v::Vector{T}, index::Int) where T = bind(select(v, index), xs->xs[1])
-select_value(ns::NSTensor, index::Int) = select_element(values(ns), index)
+select_value(ns::MaybeTensor, index::Int) = select_element(values(ns), index)
+
 prob_value(ns::NSTensor) = select_value(ns, 1)
 
 len(ns::NSTensor, dimIndex::Int)::Int = begin 
@@ -78,7 +73,7 @@ end
 
 size!(ns::MaybeTensor, svec::Vector{Int}) = begin 
     push!(svec, len(ns))
-    ns isa MaybeRealTensor && return svec
+    ns isa MaybeLeafTensor && return svec
     size!(prob_value(ns), svec)
 end
 size(ns::MaybeTensor)::Tuple = Tuple(size!(ns, Int[]))
@@ -86,21 +81,18 @@ dim(ns::MaybeTensor)::Int = length(size(ns))
 
 transpose(ns::NSTensor{NSTensor{T}}) where T = begin 
     inner_len = len(ns, 2)
-    v = map(1:inner_len) do i 
-        return map(1:len(ns)) do j 
-            return select(select_value(ns, j), i)
+    map(1:inner_len) do i 
+        map(1:len(ns)) do j 
+            select(select_value(ns, j), i)
         end |> concat
-    end
-    @show states(prob_value(ns))
-    return NSTensor(states(prob_value(ns)), v)
+    end |> NSTensor
 end
 
 transpose(ns::NSTensor, startIndex::Int) = begin 
     startIndex==1 && return transpose(ns)
-    v = map(1:len(ns)) do i 
-        return transpose(select_value(ns, i), startIndex-1)
-    end 
-    return NSTensor(states(ns), v)
+    map(1:len(ns)) do i 
+        transpose(select_value(ns, i), startIndex-1)
+    end |> NSTensor 
 end
 
 
@@ -142,16 +134,19 @@ end
 """Monad bind: Ma, (a->Mb) -> Mb"""
 bind(nsa::NSTensor, f::Function) = begin 
     v = map(1:len(nsa)) do i 
-        return f(select_value(nsa, i), i)
+        f(select_value(nsa, i), i)
     end
     if len(v)==0
         v = nothing 
     end
-    return NSTensor(states(nsa), v) 
+    return NSTensor(v) 
 end
-bind(mrt::MaybeRealTensor, f::Function) = MaybeRealTensor(states(mrt), bind(values(mrt), f))
+
+
+
+bind(mrt::MaybeRealTensor, f::Function) = MaybeRealTensor(bind(values(mrt), f))
 chain(msa::MaybeRealTensor, msb::MaybeRealTensor, f::Function) = begin
-    return MaybeRealTensor(states(msa), chain(values(msa), values(msb), f));
+    return MaybeRealTensor(chain(values(msa), values(msb), f));
 end 
 
 const ApplyElement      = Tuple{Function, NSTensor, MaybeRealTensor}
@@ -165,10 +160,7 @@ op_apply(a, b, c) = @match (a, b, c) begin
     (op, nsa, b)::ApplySkip          => bind(nsa, (ns, i)->op(ns, b));
     (bop, nsa, b)::ApplyBindOp       => bind(nsa, x->bop(x, b));
     (bop, nsa, nsb)::ApplyChainOp    => chain(nsa, nsb, bop);
-    (op, nsa, nsb)::ApplySelectValue => begin 
-                                            @assert states(nsa)==states(nsb)
-                                            return bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
-                                        end
+    (op, nsa, nsb)::ApplySelectValue => bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
 end
 
 
@@ -202,9 +194,9 @@ nsum(a, b) = @match (a, b) begin
 end
 
 
-Empty(::MaybeRealTensor) = MaybeRealTensor(nothing, nothing)
+Empty(::MaybeRealTensor) = MaybeRealTensor(nothing)
 Empty(sv::NSTensor)::NSTensor = begin 
-    return NSTensor(states(sv), map(x->MaybeRealTensor(nothing, nothing), 1:len(sv)))
+    return NSTensor(map(x->MaybeRealTensor(nothing), 1:len(sv)))
 end
 
 nreduce(nsa::NSTensor, ob::Function) = foldl(ob, values(nsa); init=Empty(prob_value(nsa)))
@@ -215,27 +207,36 @@ sum_product(nsa::NSTensor, nsb::NSTensor) = sum_reduce(nproduct(nsa, nsb))
 prepare_einsum(nsa::NSTensor, insa::Int) = begin 
     schedule = collect(1:dim(nsa))
     target = ([insa] ++ schedule[1:insa-1]) ++ schedule[insa+1:end]
-    @show target
     nsa = transpose(nsa, target)
-    @show size(nsa)
-    @show states(nsa)
     return nsa
 end
 einsum(nsa::NSTensor, nsb::NSTensor, insa::Int, insb::Int)::NSTensor = begin 
     return sum_product(prepare_einsum(nsa, insa), prepare_einsum(nsb, insb))
 end
 
+"""Monad chain: Ma, Ma, ((Mb, Mb)->Mc) -> Md, this is for tensor product"""
+tpchain(nsa::MaybeTensor, nsb::MaybeTensor, f::Function, innerCon::Type{<:MaybeTensor}) = begin
+    map(1:len(nsa)) do i 
+        map(1:len(nsb)) do j 
+            f(select_value(nsa, i), select_value(nsb, j))
+        end |> innerCon
+    end |> NSTensor
+end
+
+tensorproduct(nsa::NSTensor, nsb::NSTensor)::NSTensor = tpchain(nsa, nsb, tensorproduct, NSTensor)
+tensorproduct(nsa::NSTensor, msb::MaybeRealTensor) = tpchain(nsa, msb, nproduct, NSTensor)
+tensorproduct(msb::MaybeRealTensor, nsa::NSTensor) = tpchain(nsa, msb, nproduct, NSTensor) |> transpose
+tensorproduct(msa::MaybeRealTensor, msb::MaybeRealTensor) = tpchain(msa, msb, .*, MaybeRealTensor)
+
 
 default_NSTensor(num::Int) = begin 
-    state_vec = map(State, 1:num)
-    r_vec = map(x->MaybeRealTensor(nothing, [x]), 1:num)
-    return NSTensor(state_vec, r_vec)
+    r_vec = map(x->MaybeRealTensor([x]), 1:num)
+    return NSTensor(r_vec)
 end
 
 default_NSTensor(ns::NSTensor, num::Int) = begin
-    state_vec = map(State, 1:num)
     r_vec = map(x->ns, 1:num)
-    return NSTensor(state_vec, r_vec)
+    return NSTensor(r_vec)
 end
 
 disArray(x::MaybeTensor) = x |> toArray |> display

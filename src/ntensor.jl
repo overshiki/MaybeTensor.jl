@@ -1,7 +1,7 @@
 using MLStyle
 
 abstract type MaybeTensor end
-abstract type MaybeLeafTensor <: MaybeTensor end
+# abstract type MaybeLeafTensor <: MaybeTensor end
 
 (++)(xlist::Vector{T}, ylist::Vector{T}) where T = begin 
     clist = T[]
@@ -11,7 +11,7 @@ abstract type MaybeLeafTensor <: MaybeTensor end
 end 
 
 """Monad chain: ((Ma, Ma), (Ma, Ma)-> Ma) -> Ma"""
-chain(x::Union{Vector{T}, Nothing}, y::Union{Vector{T}, Nothing}, f::Function) where T = begin 
+chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function) where T1 where T2 = begin 
     x isa Nothing && return y 
     y isa Nothing && return x 
     return f(x, y)
@@ -33,13 +33,15 @@ len(mt::MaybeTensor) = len(values(mt))
 len(vs::Vector{T}) where T = length(vs)
 len(n::Nothing) = 0
 
-
-struct MaybeRealTensor<:MaybeLeafTensor
-    values::Union{Vector{Real}, Nothing}
+struct MaybeLeafTensor{T}<:MaybeTensor where T 
+    values::Union{Vector{T}, Nothing}
 end
+
+const MaybeRealTensor = MaybeLeafTensor{Real}
+
 toArray(mt::MaybeRealTensor) = values(mt)
-element(mt::MaybeRealTensor) = begin
-    f(x::Vector{Real}) = begin 
+element(mt::MaybeLeafTensor{T}) where T = begin
+    f(x::Vector{T}) = begin 
         @assert len(x)==1
         return x[1]
     end
@@ -68,7 +70,7 @@ len(ns::NSTensor, dimIndex::Int)::Int = begin
 end
 
 len(ns, dimIndex) = @match (ns, dimIndex) begin 
-    (ns::MaybeRealTensor, 1) => len(ns);
+    (ns::MaybeLeafTensor, 1) => len(ns);
 end
 
 size!(ns::MaybeTensor, svec::Vector{Int}) = begin 
@@ -143,24 +145,39 @@ bind(nsa::NSTensor, f::Function) = begin
 end
 
 
+"""bind function works differently for MaybeLeafTensor and NSTensor
+for NSTensor tensor, the f apply to each element of values(::NSTensor)
+for MaybeLeafTensor tensor, f apply to the whole vector 
+"""
+bind(mrt::MaybeLeafTensor{T}, f::Function) where T = MaybeLeafTensor{T}(bind(values(mrt), f))
 
-bind(mrt::MaybeRealTensor, f::Function) = MaybeRealTensor(bind(values(mrt), f))
-chain(msa::MaybeRealTensor, msb::MaybeRealTensor, f::Function) = begin
-    return MaybeRealTensor(chain(values(msa), values(msb), f));
+"""chain function only supports MaybeLeafTensor, since f apply to the whole vector
+For NSTensor, there is an element_wise version called `pairchain` 
+"""
+chain(msa::MaybeLeafTensor{T}, msb::MaybeLeafTensor{T}, f::Function) where T = begin
+    return MaybeLeafTensor{T}(chain(values(msa), values(msb), f));
 end 
 
-const ApplyElement      = Tuple{Function, NSTensor, MaybeRealTensor}
-const ApplySkip         = Tuple{Function, NSTensor, Real}
+"""only for NSTensor and NSTensor, since the bind function works differently for NSTensor and MaybeLeafTensor, the version fo MaybeLeafTensor is called `chain`"""
+pairchain(nsa::NSTensor, nsb::NSTensor, op::Function) = begin 
+    @assert len(nsa)==len(nsb)
+    return bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
+end
+
+const fReal = Union{Real, Function}
+const ApplyElement      = Tuple{Function, NSTensor, MaybeLeafTensor}
+const ApplySkip         = Tuple{Function, NSTensor, fReal}
 const ApplySelectValue  = Tuple{Function, NSTensor, NSTensor}
-const ApplyBindOp       = Tuple{Function, MaybeRealTensor, Real}
-const ApplyChainOp      = Tuple{Function, MaybeRealTensor, MaybeRealTensor}
+const ApplyBindOp       = Tuple{Function, MaybeLeafTensor, fReal}
+const ApplyChainOp      = Tuple{Function, MaybeLeafTensor, MaybeLeafTensor}
 
 op_apply(a, b, c) = @match (a, b, c) begin
     (op, nsa, mrb)::ApplyElement     => bind(nsa, (ns, i)->op(ns, element(mrb)));
     (op, nsa, b)::ApplySkip          => bind(nsa, (ns, i)->op(ns, b));
     (bop, nsa, b)::ApplyBindOp       => bind(nsa, x->bop(x, b));
     (bop, nsa, nsb)::ApplyChainOp    => chain(nsa, nsb, bop);
-    (op, nsa, nsb)::ApplySelectValue => bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
+    # (op, nsa, nsb)::ApplySelectValue => bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
+    (op, nsa, nsb)::ApplySelectValue => pairchain(nsa, nsb, op)
 end
 
 
@@ -194,9 +211,15 @@ nsum(a, b) = @match (a, b) begin
 end
 
 
-Empty(::MaybeRealTensor) = MaybeRealTensor(nothing)
+Empty(::MaybeLeafTensor{T}) where T = MaybeLeafTensor{T}(nothing)
+
+# Empty(sv::NSTensor)::NSTensor = begin 
+#     return NSTensor(map(x->MaybeRealTensor(nothing), 1:len(sv)))
+# end
 Empty(sv::NSTensor)::NSTensor = begin 
-    return NSTensor(map(x->MaybeRealTensor(nothing), 1:len(sv)))
+    map(1:len(sv)) do i 
+        Empty(select_value(sv, i))
+    end |> NSTensor
 end
 
 nreduce(nsa::NSTensor, ob::Function) = foldl(ob, values(nsa); init=Empty(prob_value(nsa)))

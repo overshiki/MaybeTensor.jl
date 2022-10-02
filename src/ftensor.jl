@@ -31,7 +31,7 @@ tensorproduct(msb::MaybeFuncTensor, nsa::NSTensor) = tpchain(nsa, msb, ncompose,
 tensorproduct(msa::MaybeFuncTensor, msb::MaybeFuncTensor) = tpchain(msa, msb, func_chain, MaybeFuncTensor)
 
 apply(nsa::NSTensor, nsb::NSTensor)::NSTensor = begin 
-    pairchain(nsa, nsb, apply)
+    broadcast_chain(nsa, nsb, apply)
 end
 
 apply(nsa::MaybeFuncTensor, nsb::MaybeRealTensor)::MaybeRealTensor = begin 

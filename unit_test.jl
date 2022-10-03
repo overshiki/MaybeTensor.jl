@@ -16,9 +16,9 @@ default_test() = begin
     nns ++ nns
     concat([nns, nns])
     typeof(nns)
-    toArray(nns) |> display
+    toNSVector(nns) |> display
     # len(nns)
-    toArray(transpose(nns)) |> display
+    toNSVector(transpose(nns)) |> display
 
     @show len(nns, 1), len(nns, 2)
 
@@ -145,13 +145,54 @@ test_ftensor() = begin
 end
 
 
-default_test()
+test_flatten() = begin 
+    nsa = default_NSTensor(3) |> x -> default_NSTensor(x, 2) |> transpose |> x -> default_NSTensor(x, 4)
+    @show size(nsa)
+    # disArray(nsa)
+    fsa = flatten(nsa)
+    @show size(fsa)
+    # disArray(fsa)    
+    rfsa = reshape(fsa, [4, 3, 2])
+    @show size(rfsa)
+    @show rfsa == nsa
+    @show rfsa == fsa 
+    # disArray(rfsa)
+end
 
+test_empty() = begin
+    @show Empty(MaybeRealTensor)
+    @show Empty([3, 2], MaybeRealTensor) |> size
+end
 
-test_sum_product()
-exam()
-test_einsum()
+include("src/sparse.jl")
+test_sparse() = begin 
+    i = [[1,1,2,3], [1,2,2,3], [3,3,3,3]]
+    prune_indices(i, 1)
+    i = [[1,2,3], [1,2,3]]
+    shape = [3,3]
+    v = map(x->MaybeRealTensor([x]), 1:3)
+    ct = coo_tensor(i, v, shape)
+    sum_reduce(ct) |> sum_reduce
+end
 
-test_tensorproduct()
+test_NSVector() = begin 
+    i = [[1,1,2,3], [1,2,2,3], [3,3,3,3]]
+    fromNSVector(i) |> size
+    fromNSVector(i) |> transpose |> size
+end
 
-test_ftensor()
+test_NSVector()
+
+# test_sparse()
+# test_empty()
+
+# test_flatten()
+
+# default_test()
+# test_sum_product()
+# exam()
+# test_einsum()
+
+# test_tensorproduct()
+
+# test_ftensor()

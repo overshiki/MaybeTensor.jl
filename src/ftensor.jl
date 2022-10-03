@@ -18,17 +18,17 @@ const fToPermute = Union{Tuple{Function, Union{NSTensor,
                         Tuple{MaybeFuncTensor, NSTensor}}
 
 
-ncompose(a, b) = @match (a, b) begin 
+compose(a, b) = @match (a, b) begin 
     (nsa, b)::fLowLevelApplyOp => op_apply(func_chain, nsa, b);
-    (nsa, b)::fApplyOp         => op_apply(ncompose, nsa, b);
-    (b, nsa)::fToPermute       => ncompose(nsa, b);
+    (nsa, b)::fApplyOp         => op_apply(compose, nsa, b);
+    (b, nsa)::fToPermute       => compose(nsa, b);
     (nsa::MaybeFuncTensor, b::Nothing) => nsa;
     (b::Nothing, nsa::MaybeFuncTensor) => nsa;
 end
 
-tensorproduct(nsa::NSTensor, msb::MaybeFuncTensor) = tpchain(nsa, msb, ncompose, NSTensor)
-tensorproduct(msb::MaybeFuncTensor, nsa::NSTensor) = tpchain(nsa, msb, ncompose, NSTensor) |> transpose
-tensorproduct(msa::MaybeFuncTensor, msb::MaybeFuncTensor) = tpchain(msa, msb, func_chain, MaybeFuncTensor)
+tensorproduct(nsa::NSTensor, msb::MaybeFuncTensor) = tpchain(nsa, msb, compose)
+tensorproduct(msb::MaybeFuncTensor, nsa::NSTensor) = tpchain(nsa, msb, compose) |> transpose
+tensorproduct(msa::MaybeFuncTensor, msb::MaybeFuncTensor) = tpchain(msa, msb, func_chain)
 
 apply(nsa::NSTensor, nsb::NSTensor)::NSTensor = begin 
     broadcast_chain(nsa, nsb, apply)

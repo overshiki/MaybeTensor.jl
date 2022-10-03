@@ -1,15 +1,22 @@
 using MLStyle
+include("utils.jl")
 
 abstract type MaybeTensor end
 # abstract type MaybeLeafTensor <: MaybeTensor end
 
-(++)(xlist::Vector{T}, ylist::Vector{T}) where T = begin 
-    clist = T[]
-    append!(clist, xlist)
-    append!(clist, ylist)
-    return clist
-end 
+######## NSTensor and MaybeLeafTensor ########
+struct NSTensor{T<:MaybeTensor}<:MaybeTensor
+    values::Union{Vector{T}, Nothing}
+end
 
+struct MaybeLeafTensor{T}<:MaybeTensor where T 
+    values::Union{Vector{T}, Nothing}
+end
+
+######## define MaybeRealTensor ########
+const MaybeRealTensor = MaybeLeafTensor{Real}
+
+######## Monad for Union{Vector, Nothing}########
 """Monad chain: ((Ma, Ma), (Ma, Ma)-> Ma) -> Ma"""
 chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function) where T1 where T2 = begin 
     x isa Nothing && return y 
@@ -22,12 +29,14 @@ bind(x::Union{Vector{T}, Nothing}, f::Function) where T = begin
     return f(x)
 end
 broadcast_bind(x::Union{Vector{T}, Nothing}, f::Function) where T = bind(x, x->map(f, x))
-# indexhook_bind(x::Union{Vector{T}, Nothing}, f::Function) where T = begin 
-#     func(x) = map(1:len(x)) do i 
-#         f(x[i], i)
-#     end 
-#     return bind(x, func)
-# end
+
+"""f: Ma, Int -> Mb"""
+indexhook_bind(x::Union{Vector{T}, Nothing}, f::Function) where T = begin 
+    func(x) = map(1:len(x)) do i 
+        f(x[i], i)
+    end 
+    return bind(x, func)
+end
 
 broadcast_chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function) where T1 where T2 = begin
     x isa Nothing && return y 
@@ -36,28 +45,33 @@ broadcast_chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f:
     return chain(x, y, (x,y)->map(t->f(t...), zip(x, y)))
 end
 
+######## utils for MaybeTensor and Vector ########
+(++)(xlist::Vector{T}, ylist::Vector{T}) where T = begin 
+    clist = T[]
+    append!(clist, xlist)
+    append!(clist, ylist)
+    return clist
+end 
+
 values(mt::MaybeTensor) = mt.values
 (++)(ar::T, br::T) where T<:MaybeTensor = begin
     return T(chain(values(ar), values(br), ++))
 end
 concat(alist::Vector{T}) where T<:MaybeTensor = foldl(++, alist; init=T(nothing))
-toArray(mt::MaybeTensor) = map(toArray, values(mt))
 
+######## working with nested vector ########
+toNSVector(mt::MaybeTensor) = map(toNSVector, values(mt))
+toNSVector(mt::MaybeRealTensor) = values(mt)
+
+fromNSVector(nsv::Vector{Vector{T}}) where T = map(fromNSVector, nsv) |> NSTensor
+fromNSVector(nsv::Vector{T}) where T<:Real = map(x->MaybeRealTensor([x]), nsv) |> NSTensor
+
+######## len, element ########
 len(mt::MaybeTensor) = len(values(mt))
 len(vs::Vector{T}) where T = length(vs)
 len(n::Nothing) = 0
 
-struct NSTensor{T<:MaybeTensor}<:MaybeTensor
-    values::Union{Vector{T}, Nothing}
-end
 
-struct MaybeLeafTensor{T}<:MaybeTensor where T 
-    values::Union{Vector{T}, Nothing}
-end
-
-const MaybeRealTensor = MaybeLeafTensor{Real}
-
-toArray(mt::MaybeRealTensor) = values(mt)
 element(mt::MaybeLeafTensor{T}) where T = begin
     f(x::Vector{T}) = begin 
         @assert len(x)==1
@@ -67,7 +81,7 @@ element(mt::MaybeLeafTensor{T}) where T = begin
 end
 
 
-
+######## select, select_element, select_value, prob_value ########
 select(v::Vector{T}, index::Int) where T = Vector{T}([v[index]])
 select(v::Nothing, index::Int) = nothing
 
@@ -80,6 +94,7 @@ select_value(ns::MaybeTensor, index::Int) = select_element(values(ns), index)
 
 prob_value(ns::NSTensor) = select_value(ns, 1)
 
+######## len, size, ndims ########
 len(ns::NSTensor, dimIndex::Int)::Int = begin 
     dimIndex==1 && return len(ns)    
     return len(select_element(values(ns), 1), dimIndex-1)
@@ -94,9 +109,12 @@ size!(ns::MaybeTensor, svec::Vector{Int}) = begin
     ns isa MaybeLeafTensor && return svec
     size!(prob_value(ns), svec)
 end
-size(ns::MaybeTensor)::Tuple = Tuple(size!(ns, Int[]))
-dim(ns::MaybeTensor)::Int = length(size(ns))
+Base.size(ns::MaybeTensor)::Tuple = Tuple(size!(ns, Int[]))
+Base.ndims(ns::MaybeTensor)::Int = length(size(ns))
 
+
+
+######## transpose ########
 transpose(ns::NSTensor{NSTensor{T}}) where T = begin 
     inner_len = len(ns, 2)
     map(1:inner_len) do i 
@@ -114,9 +132,6 @@ transpose(ns::NSTensor, startIndex::Int) = begin
 
     return broadcast_bind(ns, x->transpose(x, startIndex-1))
 end
-
-
-
 
 struct StartIndex 
     index::Int
@@ -150,6 +165,8 @@ transpose(ns::NSTensor, targetVec::Vector{Int})::NSTensor = begin
     return transpose(ns, transpose_schedule(targetVec))
 end
 
+
+######## broadcast_bind for MaybeTensor ########
 rightConstuctor(v::Vector{T}, T2) where T = begin
     T<:MaybeTensor && return NSTensor{T}(v)
     T<:Real && return MaybeLeafTensor{Real}(v)
@@ -166,16 +183,16 @@ broadcast_bind(nsa::T, f::Function) where T<:MaybeTensor = begin
     return rightConstuctor(broadcast_bind(values(nsa), f), T)
 end
 
-# indexhook_bind(nsa::NSTensor, f::Function) = begin 
-#     # v = map(1:len(nsa)) do i 
-#     #     f(select_value(nsa, i), i)
-#     # end
-#     # if len(v)==0
-#     #     v = nothing 
-#     # end
-#     # return NSTensor(v) 
-#     indexhook_bind(values(nsa), f) |> NSTensor
-# end
+indexhook_bind(nsa::NSTensor, f::Function) = begin 
+    # v = map(1:len(nsa)) do i 
+    #     f(select_value(nsa, i), i)
+    # end
+    # if len(v)==0
+    #     v = nothing 
+    # end
+    # return NSTensor(v) 
+    indexhook_bind(values(nsa), f) |> NSTensor
+end
 
 
 """bind function only supports MaybeLeafTensor, since f apply to the whole vector.
@@ -190,20 +207,14 @@ chain(msa::MaybeLeafTensor{T}, msb::MaybeLeafTensor{T}, f::Function) where T = b
     return MaybeLeafTensor{T}(chain(values(msa), values(msb), f));
 end 
 
+######## broadcast operators ########
 broadcast_chain(msa::MaybeLeafTensor{T}, msb::MaybeLeafTensor{T}, f::Function) where T = begin
     return MaybeLeafTensor{T}(broadcast_chain(values(msa), values(msb), f));
 end 
 
 """only for NSTensor and NSTensor, since the bind function works differently for NSTensor and MaybeLeafTensor, the version fo MaybeLeafTensor is called `chain`"""
-# pairchain(nsa::NSTensor, nsb::NSTensor, op::Function) = begin 
-#     @assert len(nsa)==len(nsb)
-#     return indexhook_bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
-#     # return broadcast_bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
-# end
 broadcast_chain(nsa::NSTensor, nsb::NSTensor, op::Function) = begin 
     @assert len(nsa)==len(nsb)
-    # return indexhook_bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
-    # return broadcast_bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
     return broadcast_chain(values(nsa), values(nsb), op) |> NSTensor
 end
 
@@ -215,16 +226,10 @@ const ApplyBindOp       = Tuple{Function, MaybeLeafTensor, fReal}
 const ApplyChainOp      = Tuple{Function, MaybeLeafTensor, MaybeLeafTensor}
 
 op_apply(a, b, c) = @match (a, b, c) begin
-    # (op, nsa, mrb)::ApplyElement     => indexhook_bind(nsa, (ns, i)->op(ns, element(mrb)));
     (op, nsa, mrb)::ApplyElement     => broadcast_bind(nsa, ns->op(ns, element(mrb)));
-    # (op, nsa, b)::ApplySkip          => indexhook_bind(nsa, (ns, i)->op(ns, b));
     (op, nsa, b)::ApplySkip          => broadcast_bind(nsa, ns->op(ns, b));
-    # (bop, nsa, b)::ApplyBindOp       => bind(nsa, x->bop(x, b));
     (bop, nsa, b)::ApplyBindOp       => broadcast_bind(nsa, x->bop(x, b));
-    # (bop, nsa, nsb)::ApplyChainOp    => chain(nsa, nsb, bop);
     (bop, nsa, nsb)::ApplyChainOp    => broadcast_chain(nsa, nsb, bop);
-    # (op, nsa, nsb)::ApplySelectValue => bind(nsa, (ns, i)->op(ns, select_value(nsb, i)))
-    # (op, nsa, nsb)::ApplySelectValue => pairchain(nsa, nsb, op)
     (op, nsa, nsb)::ApplySelectValue => broadcast_chain(nsa, nsb, op)
 end
 
@@ -243,9 +248,6 @@ const ToPermute = Union{Tuple{Real, Union{NSTensor,
 
 Base.:*(a, b) = @match (a, b) begin 
     (nsa, b)::Union{LowLevelApplyOp, ApplyOp} => op_apply(*, nsa, b);
-    # (nsa, b)::ApplyOp         => op_apply(nproduct, nsa, b);
-    # (nsa, b)::ApplyOp         => op_apply(*, nsa, b);
-    # (b, nsa)::ToPermute       => nproduct(nsa, b);
     (b, nsa)::ToPermute       => nsa * b;
     (nsa::MaybeRealTensor, b::Nothing) => nsa;
     (b::Nothing, nsa::MaybeRealTensor) => nsa;
@@ -254,36 +256,37 @@ end
 
 Base.:+(a, b) = @match (a, b) begin 
     (nsa, b)::Union{LowLevelApplyOp, ApplyOp} => op_apply(+, nsa, b);
-    # (nsa, b)::ApplyOp         => op_apply(+, nsa, b);
     (b, nsa)::ToPermute       => nsa + b;
-    # (nsa, b)::ApplyOp         => op_apply(nsum, nsa, b);
-    # (b, nsa)::ToPermute       => nsum(nsa, b);
     (nsa::MaybeRealTensor, b::Nothing) => nsa;
     (b::Nothing, nsa::MaybeRealTensor) => nsa;
 end
 
-
+######## reduce, sum_product and einsum ########
+Empty(::Type{MaybeLeafTensor{T}}) where T = MaybeLeafTensor{T}(nothing)
 Empty(::MaybeLeafTensor{T}) where T = MaybeLeafTensor{T}(nothing)
-
-# Empty(sv::NSTensor)::NSTensor = begin 
-#     return NSTensor(map(x->MaybeRealTensor(nothing), 1:len(sv)))
-# end
+"""empty tensor with the same shape as sv"""
 Empty(sv::NSTensor)::NSTensor = broadcast_bind(sv, Empty)
-    # map(1:len(sv)) do i 
-    #     Empty(select_value(sv, i))
-    # end |> NSTensor
 
+Empty(v::MaybeTensor, shape::Vector{Int}) = begin
+    len(shape)==0 && return v 
+    xs, x = shape[1:end-1], shape[end]
+    nv = map(x->Empty(v), 1:x) |> NSTensor
+    return Empty(nv, xs)
+end
 
-# Base.reduce(ob::Function, nsa::NSTensor) = foldl(ob, values(nsa); init=Empty(prob_value(nsa)))
+(Empty(shape::Vector{Int}, ::Type{MaybeLeafTensor{T}})::NSTensor) where T = begin 
+    xs, x = shape[1:end-1], shape[end]
+    v = map(x->Empty(MaybeLeafTensor{T}), 1:x) |> NSTensor
+    return Empty(v, xs)    
+end
+
 Base.reduce(ob::Function, nsa::NSTensor; init=Empty(prob_value(nsa))) = foldl(ob, values(nsa); init=init)
-# sum_reduce(nsa::NSTensor) = Base.reduce(nsum, nsa)
 sum_reduce(nsa::NSTensor) = Base.reduce(+, nsa)
 
-# sum_product(nsa::NSTensor, nsb::NSTensor) = sum_reduce(nproduct(nsa, nsb))
 sum_product(nsa::NSTensor, nsb::NSTensor) = sum_reduce(nsa * nsb)
 
 prepare_einsum(nsa::NSTensor, insa::Int) = begin 
-    schedule = collect(1:dim(nsa))
+    schedule = collect(1:ndims(nsa))
     target = ([insa] ++ schedule[1:insa-1]) ++ schedule[insa+1:end]
     nsa = transpose(nsa, target)
     return nsa
@@ -292,36 +295,72 @@ einsum(nsa::NSTensor, nsb::NSTensor, insa::Int, insb::Int)::NSTensor = begin
     return sum_product(prepare_einsum(nsa, insa), prepare_einsum(nsb, insb))
 end
 
+######## tensor product ########
 """Monad chain: Ma, Ma, ((Mb, Mb)->Mc) -> Md, this is for tensor product"""
-tpchain(nsa::MaybeTensor, nsb::MaybeTensor, f::Function, innerCon::Type{<:MaybeTensor}) = begin
-    # map(1:len(nsa)) do i 
-    #     map(1:len(nsb)) do j 
-    #         f(select_value(nsa, i), select_value(nsb, j))
-    #     end |> innerCon
-    # end |> NSTensor
+tpchain(nsa::MaybeTensor, nsb::MaybeTensor, f::Function) = broadcast_bind(nsa, 
+                                                        x->broadcast_bind(nsb, 
+                                                        y->f(x,y)))
 
-    return broadcast_bind(nsa, x->broadcast_bind(nsb, y->f(x,y)))
 
+tensorproduct(nsa::NSTensor, nsb::NSTensor)::NSTensor = tpchain(nsa, nsb, tensorproduct)
+tensorproduct(nsa::NSTensor, msb::MaybeRealTensor) = tpchain(nsa, msb, *)
+tensorproduct(msb::MaybeRealTensor, nsa::NSTensor) = tpchain(nsa, msb, *) |> transpose
+tensorproduct(msa::MaybeRealTensor, msb::MaybeRealTensor) = tpchain(msa, msb, *)
+
+######## flatten and reshape ########
+_flatten(ns::NSTensor) = begin 
+    _flatten(broadcast_bind(values(ns), _flatten))
+end
+_flatten(vs::Vector{Vector{T}}) where T = foldl(++, vs; init=T[])
+_flatten(vs::MaybeLeafTensor) = [vs]
+flatten(ns::NSTensor{T}) where T = _flatten(ns) |> x->rightConstuctor(x, T)
+
+(splitstack(store::Vector{Vector{T}}, vs::Vector{T}, slen::Int)::Vector{Vector{T}}) where T = begin 
+    len(vs)==0 && return store
+    s, vs = vs[1:slen], vs[slen+1:end]
+    return splitstack(store++[s], vs, slen)
+end
+(Base.reshape(ns::NSTensor{T}, shape::Tuple{Int, Int})::NSTensor{NSTensor{T}}) where T<:MaybeLeafTensor = begin 
+    xlen, slen = shape
+    nns = splitstack(Vector{T}[], values(ns), slen)
+    @assert len(nns)==xlen
+    nns = map(NSTensor, nns) |> NSTensor 
+    return nns
+end
+Base.reshape(ns::NSTensor, shape::Vector{Int})::NSTensor = begin
+    len(shape)<=1 && return ns
+    xlen, sshape = shape[1], shape[2:end]
+    slen = foldl(*, sshape; init=1)
+    nns = reshape(ns, (xlen, slen))
+    return broadcast_bind(nns, x->reshape(x, sshape))
 end
 
-tensorproduct(nsa::NSTensor, nsb::NSTensor)::NSTensor = tpchain(nsa, nsb, tensorproduct, NSTensor)
-# tensorproduct(nsa::NSTensor, msb::MaybeRealTensor) = tpchain(nsa, msb, nproduct, NSTensor)
-# tensorproduct(msb::MaybeRealTensor, nsa::NSTensor) = tpchain(nsa, msb, nproduct, NSTensor) |> transpose
-tensorproduct(nsa::NSTensor, msb::MaybeRealTensor) = tpchain(nsa, msb, *, NSTensor)
-tensorproduct(msb::MaybeRealTensor, nsa::NSTensor) = tpchain(nsa, msb, *, NSTensor) |> transpose
-tensorproduct(msa::MaybeRealTensor, msb::MaybeRealTensor) = tpchain(msa, msb, .*, MaybeRealTensor)
+######## compare operators ########
+Base.:(==)(nsa::MaybeTensor, nsb::MaybeTensor)::Bool = begin 
+    len(nsa)!==len(nsb) && return false
+    broadcast_chain(values(nsa), values(nsb), ==) |> all
+end
 
 
-default_NSTensor(num::Int) = begin 
+######## default constructor ########
+default_NSTensor(num::Int)::NSTensor = begin 
     r_vec = map(x->MaybeRealTensor([x]), 1:num)
     return NSTensor(r_vec)
 end
 
-default_NSTensor(ns::NSTensor, num::Int) = begin
+default_NSTensor(ns::NSTensor, num::Int)::NSTensor = begin
     r_vec = map(x->ns, 1:num)
     return NSTensor(r_vec)
 end
 
-disArray(x::MaybeTensor) = x |> toArray |> display
+disArray(x::MaybeTensor) = x |> toNSVector |> fullstack |> cleanArray |> display
+#     dims = dim(x)
+#     @show dims, size(x)
+#     @assert size(x)[end] == 1
+#     x = x |> toNSVector 
+#     @show size(x), x
+#     error()
+#     # |> x->dropdims(x;dims=dims) |> display
+# end
 
 

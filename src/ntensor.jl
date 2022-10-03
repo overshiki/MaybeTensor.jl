@@ -16,59 +16,48 @@ end
 ######## define MaybeRealTensor ########
 const MaybeRealTensor = MaybeLeafTensor{Real}
 
-######## Monad for Union{Vector, Nothing}########
-"""Monad chain: ((Ma, Ma), (Ma, Ma)-> Ma) -> Ma"""
-chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function) where T1 where T2 = begin 
-    x isa Nothing && return y 
-    y isa Nothing && return x 
-    return f(x, y)
-end
-"""Monad bind: Ma, (a->Mb) -> Mb"""
-bind(x::Union{Vector{T}, Nothing}, f::Function) where T = begin
-    x isa Nothing && return x 
-    return f(x)
-end
-broadcast_bind(x::Union{Vector{T}, Nothing}, f::Function) where T = bind(x, x->map(f, x))
 
-"""f: Ma, Int -> Mb"""
-indexhook_bind(x::Union{Vector{T}, Nothing}, f::Function) where T = begin 
-    func(x) = map(1:len(x)) do i 
-        f(x[i], i)
-    end 
-    return bind(x, func)
+
+
+######## reduce, sum_product and einsum ########
+# Empty(::Type{MaybeLeafTensor{T}}) where T = MaybeLeafTensor{T}(nothing)
+Empty(::Type{T}) where T<:MaybeTensor = T(nothing)
+Empty(::MaybeLeafTensor{T}) where T = MaybeLeafTensor{T}(nothing)
+
+"""empty tensor with the same shape as sv"""
+Empty(sv::NSTensor)::NSTensor = broadcast_bind(sv, Empty)
+
+Empty(v::MaybeTensor, shape::Vector{Int}) = begin
+    len(shape)==0 && return v 
+    xs, x = shape[1:end-1], shape[end]
+    nv = map(x->Empty(v), 1:x) |> NSTensor
+    return Empty(nv, xs)
 end
 
-broadcast_chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function) where T1 where T2 = begin
-    x isa Nothing && return y 
-    y isa Nothing && return x 
-    @assert len(x)==len(y)
-    return chain(x, y, (x,y)->map(t->f(t...), zip(x, y)))
+(Empty(shape::Vector{Int}, ::Type{MaybeLeafTensor{T}})::NSTensor) where T = begin 
+    xs, x = shape[1:end-1], shape[end]
+    v = map(x->Empty(MaybeLeafTensor{T}), 1:x) |> NSTensor
+    return Empty(v, xs)    
 end
 
 ######## utils for MaybeTensor and Vector ########
-(++)(xlist::Vector{T}, ylist::Vector{T}) where T = begin 
-    clist = T[]
-    append!(clist, xlist)
-    append!(clist, ylist)
-    return clist
-end 
+
 
 values(mt::MaybeTensor) = mt.values
 (++)(ar::T, br::T) where T<:MaybeTensor = begin
     return T(chain(values(ar), values(br), ++))
 end
-concat(alist::Vector{T}) where T<:MaybeTensor = foldl(++, alist; init=T(nothing))
+concat(alist::Vector{T}) where T<:MaybeTensor = foldl(++, alist; init=Empty(T))
 
 ######## working with nested vector ########
 toNSVector(mt::MaybeTensor) = map(toNSVector, values(mt))
-toNSVector(mt::MaybeRealTensor) = values(mt)
+toNSVector(mt::MaybeLeafTensor{T}) where T<:Real = values(mt)
 
 fromNSVector(nsv::Vector{Vector{T}}) where T = map(fromNSVector, nsv) |> NSTensor
-fromNSVector(nsv::Vector{T}) where T<:Real = map(x->MaybeRealTensor([x]), nsv) |> NSTensor
+fromNSVector(nsv::Vector{T}) where T<:Real = map(x->MaybeLeafTensor{T}([x]), nsv) |> NSTensor
 
 ######## len, element ########
 len(mt::MaybeTensor) = len(values(mt))
-len(vs::Vector{T}) where T = length(vs)
 len(n::Nothing) = 0
 
 
@@ -82,14 +71,10 @@ end
 
 
 ######## select, select_element, select_value, prob_value ########
-select(v::Vector{T}, index::Int) where T = Vector{T}([v[index]])
-select(v::Nothing, index::Int) = nothing
 
 select(mt::T, index::Int) where T<:MaybeTensor = begin 
     return T(select(values(mt), index))
 end
-
-select_element(v::Vector{T}, index::Int) where T = bind(select(v, index), xs->xs[1])
 select_value(ns::MaybeTensor, index::Int) = select_element(values(ns), index)
 
 prob_value(ns::NSTensor) = select_value(ns, 1)
@@ -126,10 +111,6 @@ end
 
 transpose(ns::NSTensor, startIndex::Int) = begin 
     startIndex==1 && return transpose(ns)
-    # map(1:len(ns)) do i 
-    #     transpose(select_value(ns, i), startIndex-1)
-    # end |> NSTensor 
-
     return broadcast_bind(ns, x->transpose(x, startIndex-1))
 end
 
@@ -261,24 +242,7 @@ Base.:+(a, b) = @match (a, b) begin
     (b::Nothing, nsa::MaybeRealTensor) => nsa;
 end
 
-######## reduce, sum_product and einsum ########
-Empty(::Type{MaybeLeafTensor{T}}) where T = MaybeLeafTensor{T}(nothing)
-Empty(::MaybeLeafTensor{T}) where T = MaybeLeafTensor{T}(nothing)
-"""empty tensor with the same shape as sv"""
-Empty(sv::NSTensor)::NSTensor = broadcast_bind(sv, Empty)
 
-Empty(v::MaybeTensor, shape::Vector{Int}) = begin
-    len(shape)==0 && return v 
-    xs, x = shape[1:end-1], shape[end]
-    nv = map(x->Empty(v), 1:x) |> NSTensor
-    return Empty(nv, xs)
-end
-
-(Empty(shape::Vector{Int}, ::Type{MaybeLeafTensor{T}})::NSTensor) where T = begin 
-    xs, x = shape[1:end-1], shape[end]
-    v = map(x->Empty(MaybeLeafTensor{T}), 1:x) |> NSTensor
-    return Empty(v, xs)    
-end
 
 Base.reduce(ob::Function, nsa::NSTensor; init=Empty(prob_value(nsa))) = foldl(ob, values(nsa); init=init)
 sum_reduce(nsa::NSTensor) = Base.reduce(+, nsa)

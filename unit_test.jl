@@ -166,13 +166,19 @@ end
 
 include("src/sparse.jl")
 test_sparse() = begin 
-    i = [[1,1,2,3], [1,2,2,3], [3,3,3,3]]
-    prune_indices(i, 1)
+
     i = [[1,2,3], [1,2,3]]
     shape = [3,3]
     v = map(x->MaybeRealTensor([x]), 1:3)
     ct = coo_tensor(i, v, shape)
-    sum_reduce(ct) |> sum_reduce
+    @show sum_reduce(ct) |> sum_reduce
+
+    i = [[1,1,2,3], [1,2,2,3], [3,3,3,3]]
+    @show prune_indices(i, 1)
+    shape = [3,3,3]
+    v = map(x->MaybeRealTensor([x]), 1:4)
+    ct = coo_tensor(i, v, shape)
+    @show sum_reduce(ct) |> sum_reduce |> sum_reduce
 end
 
 test_NSVector() = begin 
@@ -181,18 +187,28 @@ test_NSVector() = begin
     fromNSVector(i) |> transpose |> size
 end
 
+test_filterl() = begin 
+    a = [1,2,3,4]
+    pred = x->x>2
+    @show filterl(pred, a)
+    pred = [true, false, true, false]
+    @show filterl(pred, a)
+end
+
+test_filterl()
+
 test_NSVector()
 
-# test_sparse()
-# test_empty()
+test_sparse()
+test_empty()
 
-# test_flatten()
+test_flatten()
 
-# default_test()
-# test_sum_product()
-# exam()
-# test_einsum()
+default_test()
+test_sum_product()
+exam()
+test_einsum()
 
-# test_tensorproduct()
+test_tensorproduct()
 
-# test_ftensor()
+test_ftensor()

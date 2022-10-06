@@ -19,8 +19,8 @@ const fToPermute = Union{Tuple{Function, Union{NSTensor,
 
 
 compose(a, b) = @match (a, b) begin 
-    (nsa, b)::fLowLevelApplyOp => op_apply(func_chain, nsa, b);
-    (nsa, b)::fApplyOp         => op_apply(compose, nsa, b);
+    (nsa, b)::fLowLevelApplyOp => op_apply((func_chain, nsa, b), Val(:block));
+    (nsa, b)::fApplyOp         => op_apply((compose, nsa, b), Val(:block));
     (b, nsa)::fToPermute       => compose(nsa, b);
     (nsa::MaybeFuncTensor, b::Nothing) => nsa;
     (b::Nothing, nsa::MaybeFuncTensor) => nsa;
@@ -31,7 +31,7 @@ tensorproduct(msb::MaybeFuncTensor, nsa::NSTensor) = tpchain(nsa, msb, compose) 
 tensorproduct(msa::MaybeFuncTensor, msb::MaybeFuncTensor) = tpchain(msa, msb, func_chain)
 
 apply(nsa::NSTensor, nsb::NSTensor)::NSTensor = begin 
-    broadcast_chain(nsa, nsb, apply)
+    broadcast_chain(nsa, nsb, apply, Val(:pass))
 end
 
 apply(nsa::MaybeFuncTensor, nsb::MaybeRealTensor)::MaybeRealTensor = begin 
@@ -40,6 +40,6 @@ apply(nsa::MaybeFuncTensor, nsb::MaybeRealTensor)::MaybeRealTensor = begin
         func(vnsa, vnsb) = begin 
             vnsb[i] |> vnsa[i]
         end
-        return chain(values(nsa), values(nsb), func)
+        return chain(values(nsa), values(nsb), func, Val(:pass))
     end |> MaybeRealTensor
 end

@@ -35,7 +35,7 @@ end
 
 
 """build new NSTensor from the Empty tensor and the coo information, in a recursive way"""
-(copyfrom(indices::Vector{Vector{Int}}, values::Vector{T}, ns::NSTensor{T2})::NSTensor) where T<:MaybeTensor where T2<:NSTensor = begin 
+(copyfrom(indices::Vector{Vector{Int}}, values::Vector{T}, ns::NSTensor{T2})::NSTensor) where T<:AbstractMaybeTensor where T2<:NSTensor = begin 
     indexhook_bind(ns, (nns, i)->copyfrom(prune_indices(indices, i), values, nns))
 end
 
@@ -43,7 +43,7 @@ copy_with_default(indices::Vector{Int}, values::Vector{T}, index::Int) where T<:
     index in indices && return values[index]
     return Empty(T)
 end
-(copyfrom(indices::Vector{Vector{Int}}, values::Vector{T}, ns::NSTensor{T2})::NSTensor) where T<:MaybeTensor where T2<:MaybeLeafTensor = begin 
+(copyfrom(indices::Vector{Vector{Int}}, values::Vector{T}, ns::NSTensor{T2})::NSTensor) where T<:AbstractMaybeTensor where T2<:MaybeLeafTensor = begin 
     @assert len(indices)<=1
     if len(indices)==0 
         return ns
@@ -53,7 +53,7 @@ end
     end
 end
 
-(coo_tensor(indices::Vector{Vector{Int}}, values::Vector{T}, shape::Vector{Int})::NSTensor) where T<:MaybeTensor = begin 
+(coo_tensor(indices::Vector{Vector{Int}}, values::Vector{T}, shape::Vector{Int})::NSTensor) where T<:AbstractMaybeTensor = begin 
     ns = Empty(shape, T)
     return copyfrom(indices, values, ns)
 end

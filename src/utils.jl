@@ -1,4 +1,12 @@
 ######## utils for NSVector ########
+(++)(xlist::Vector{T}, ylist::Vector{T}) where T = begin 
+    clist = T[]
+    append!(clist, xlist)
+    append!(clist, ylist)
+    return clist
+end 
+
+
 len(vs::Vector{T}) where T = length(vs)
 select(v::Vector{T}, index::Int) where T = Vector{T}([v[index]])
 select(v::Nothing, index::Int) = nothing
@@ -26,21 +34,27 @@ cleanNSVector(vs::Vector{Vector{T}}) where T<:Real = concat(vs)
 Empty(ns::Vector{T}) where T<:Real = T[]
 (Empty(ns::Vector{Vector{T}})::Vector{Vector{T}}) where T<:Real = map(Empty, ns)
 
-######## Monad for Union{Vector, Nothing}########
-"""Monad chain: ((Ma, Ma), (Ma, Ma)-> Ma) -> Ma"""
-chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function) where T1 where T2 = begin 
-    x isa Nothing && return y 
-    y isa Nothing && return x 
-    return f(x, y)
-end
-"""Monad bind: Ma, (a->Mb) -> Mb"""
+########Treat Union{Vector, Nothing} as Monad Maybe########
+"""
+Note that the Monad defined here is slightly different from Haskell's definition of 
+    data Maybe a = Just a | Nothing 
+Instead, it is a union type Union{Vector, Nothing}. The difference is that, when a function returns a Vector, we do not need to wrap it with Just notation anymore. I think this is actually more convinient to use, but may not be safe enough though.
+"""
+
+
+
+
+"""Monad bind: M [a] -> ([a] -> b) -> M b"""
 bind(x::Union{Vector{T}, Nothing}, f::Function) where T = begin
     x isa Nothing && return x 
     return f(x)
 end
+
+"""Monad bind: M [a] -> (a -> b) -> M [b]"""
 broadcast_bind(x::Union{Vector{T}, Nothing}, f::Function) where T = bind(x, x->map(f, x))
 
-"""f: Ma, Int -> Mb"""
+"""f: a -> Int -> b 
+wrapping it into func: [a] -> Int -> [b]"""
 indexhook_bind(x::Union{Vector{T}, Nothing}, f::Function) where T = begin 
     func(x) = map(1:len(x)) do i 
         f(x[i], i)
@@ -48,22 +62,44 @@ indexhook_bind(x::Union{Vector{T}, Nothing}, f::Function) where T = begin
     return bind(x, func)
 end
 
-broadcast_chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function) where T1 where T2 = begin
+
+"""
+Note that the chain function defined here is not the Haskell's >> function in its Monad definition.
+"""
+
+"""Tolerable chain: M [a] -> M [b] -> ([a] -> [b] -> c) -> M c"""
+chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function, ::Val{:pass}) where {T1, T2} = begin 
+    x isa Nothing && return y 
+    y isa Nothing && return x 
+    return f(x, y)
+end
+
+"""blocking chain: M [a] -> M [b] -> ([a] -> [b] -> c) -> M c"""
+chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function, ::Val{:block}) where {T1, T2} = begin 
+    x isa Nothing && return Nothing 
+    y isa Nothing && return Nothing 
+    return f(x, y)
+end
+
+
+broadcast_chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function, ::Val{:pass}) where {T1, T2} = begin
     x isa Nothing && return y 
     y isa Nothing && return x 
     @assert len(x)==len(y)
-    return chain(x, y, (x,y)->map(t->f(t...), zip(x, y)))
+    return chain(x, y, (x,y)->map(t->f(t...), zip(x, y)), Val(:pass))
+end
+
+broadcast_chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function, ::Val{:block}) where {T1, T2} = begin
+    x isa Nothing && return Nothing 
+    y isa Nothing && return Nothing
+    @assert len(x)==len(y)
+    return chain(x, y, (x,y)->map(t->f(t...), zip(x, y)), Val(:block))
 end
 
 
 ######## utils for Vector ########
 
-(++)(xlist::Vector{T}, ylist::Vector{T}) where T = begin 
-    clist = T[]
-    append!(clist, xlist)
-    append!(clist, ylist)
-    return clist
-end 
+
 
 binary2maybe(binary_pred::Function) = begin 
     func(x) = begin 
@@ -73,10 +109,10 @@ binary2maybe(binary_pred::Function) = begin
     return func
 end
 
-"""pred: a->Ma"""
+"""pred: a-> M [a]"""
 filterl(pred::Function, vs::Vector{T}) where T = begin
     maybe_pred = binary2maybe(pred) 
-    return foldl((x,y)->chain(x, maybe_pred(y), ++), vs; init=T[])
+    return foldl((x,y)->chain(x, maybe_pred(y), ++, Val(:pass)), vs; init=T[])
 end
 
 filterl(pred::Vector{Bool}, vs::Vector{T}) where T = begin
@@ -87,5 +123,5 @@ filterl(pred::Vector{Bool}, vs::Vector{T}) where T = begin
     end
     @assert len(pred)==len(vs)
     nvs = collect(zip(pred, vs))
-    return foldl((x,y)->chain(x, binaryZip2maybe(y), ++), nvs; init=T[])
+    return foldl((x,y)->chain(x, binaryZip2maybe(y), ++, Val(:pass)), nvs; init=T[])
 end

@@ -41,21 +41,21 @@ Note that the Monad defined here is slightly different from Haskell's definition
 Instead, it is a union type Union{Vector, Nothing}. The difference is that, when a function returns a Vector, we do not need to wrap it with Just notation anymore. I think this is actually more convinient to use, but may not be safe enough though.
 """
 
-
+const Maybe{T} = Union{T, Nothing}
 
 
 """Monad bind: M [a] -> ([a] -> b) -> M b"""
-bind(x::Union{Vector{T}, Nothing}, f::Function) where T = begin
+bind(x::Maybe{T}, f::Function) where T = begin
     x isa Nothing && return x 
     return f(x)
 end
 
 """Monad bind: M [a] -> (a -> b) -> M [b]"""
-broadcast_bind(x::Union{Vector{T}, Nothing}, f::Function) where T = bind(x, x->map(f, x))
+broadcast_bind(x::Maybe{Vector{T}}, f::Function) where T = bind(x, x->map(f, x))
 
 """f: a -> Int -> b 
 wrapping it into func: [a] -> Int -> [b]"""
-indexhook_bind(x::Union{Vector{T}, Nothing}, f::Function) where T = begin 
+indexhook_bind(x::Maybe{Vector{T}}, f::Function) where T = begin 
     func(x) = map(1:len(x)) do i 
         f(x[i], i)
     end 
@@ -68,28 +68,28 @@ Note that the chain function defined here is not the Haskell's >> function in it
 """
 
 """Tolerable chain: M [a] -> M [b] -> ([a] -> [b] -> c) -> M c"""
-chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function, ::Val{:pass}) where {T1, T2} = begin 
+chain(x::Maybe{T1}, y::Maybe{T2}, f::Function, ::Val{:pass}) where {T1, T2} = begin 
     x isa Nothing && return y 
     y isa Nothing && return x 
     return f(x, y)
 end
 
 """blocking chain: M [a] -> M [b] -> ([a] -> [b] -> c) -> M c"""
-chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function, ::Val{:block}) where {T1, T2} = begin 
-    x isa Nothing && return Nothing 
-    y isa Nothing && return Nothing 
+chain(x::Maybe{T1}, y::Maybe{T2}, f::Function, ::Val{:block}) where {T1, T2} = begin 
+    x isa Nothing && return x
+    y isa Nothing && return y
     return f(x, y)
 end
 
 
-broadcast_chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function, ::Val{:pass}) where {T1, T2} = begin
+broadcast_chain(x::Maybe{Vector{T1}}, y::Maybe{Vector{T2}}, f::Function, ::Val{:pass}) where {T1, T2} = begin
     x isa Nothing && return y 
     y isa Nothing && return x 
     @assert len(x)==len(y)
     return chain(x, y, (x,y)->map(t->f(t...), zip(x, y)), Val(:pass))
 end
 
-broadcast_chain(x::Union{Vector{T1}, Nothing}, y::Union{Vector{T2}, Nothing}, f::Function, ::Val{:block}) where {T1, T2} = begin
+broadcast_chain(x::Maybe{Vector{T1}}, y::Maybe{Vector{T2}}, f::Function, ::Val{:block}) where {T1, T2} = begin
     x isa Nothing && return Nothing 
     y isa Nothing && return Nothing
     @assert len(x)==len(y)

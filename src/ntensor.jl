@@ -6,11 +6,11 @@ abstract type AbstractMaybeTensor end
 
 ######## NSTensor and MaybeLeafTensor ########
 struct NSTensor{T<:AbstractMaybeTensor}<:AbstractMaybeTensor
-    values::Union{Vector{T}, Nothing}
+    values::Maybe{Vector{T}}
 end
 
 struct MaybeLeafTensor{T}<:AbstractMaybeTensor where T 
-    values::Union{Vector{T}, Nothing}
+    values::Maybe{Vector{T}}
 end
 
 ######## define MaybeRealTensor ########

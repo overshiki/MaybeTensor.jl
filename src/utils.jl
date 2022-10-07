@@ -44,6 +44,10 @@ Instead, it is a union type Union{Vector, Nothing}. The difference is that, when
 const Maybe{T} = Union{T, Nothing}
 
 
+"""useful function for combine bind with do notation"""
+do_reverse(b::Function) = (f, x) -> b(x, f)
+
+
 """Monad bind: M [a] -> ([a] -> b) -> M b"""
 bind(x::Maybe{T}, f::Function) where T = begin
     x isa Nothing && return x 

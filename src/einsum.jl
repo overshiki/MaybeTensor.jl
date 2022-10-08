@@ -58,9 +58,9 @@ end
 string_parse(str::String, parser::SepTwo) = begin 
     str = rm_strSpace(str)
     index = find_unique_sep_index(str, parser.sep)
-    left = str[1:index-1]
-    right = str[index+length(parser.sep):end]
-    return SepTwo(parser, pass_bind(string_parse, left, parser.left),pass_bind(string_parse, right, parser.right))
+    left = str[1:index-1] |> rm_strSpace
+    right = str[index+length(parser.sep):end] |> rm_strSpace
+    return SepTwo(parser, pass_bind(string_parse, left, parser.left), pass_bind(string_parse, right, parser.right))
 end
 
 """
@@ -87,8 +87,20 @@ string_parse(str::String, parser::SepMulti) = begin
 end
 
 
-parser = Clause('(', ')', SepTwo("->", SepMulti(",", nothing), nothing))
-@show string_parse("(ijk, ikl -> jl)", parser)
+analyze_parser(parser::StringParser) = begin 
+    from_list = parser.content.left.content
+    to = parser.content.right
+    @assert from_list isa Vector
+    @assert to isa String
+    return from_list, to
+end
+
+# to_chars(str::String)::Vector{Char} = begin 
+#     length(str)==0 && return 
+#     x, xs = str[1], str[2:end]
+#     return ['x']
+# end
+to_chars(str::String)::Vector{Char} = foldl((x,y)->x++[y], str; init=Char[])
 
 
 """for example, 
@@ -98,9 +110,12 @@ parser = Clause('(', ')', SepTwo("->", SepMulti(",", nothing), nothing))
         (ijk, ikl -> jl)
 """
 eincode_parse(eincode::String) = begin 
-    sbefore, safter = map(x-> x |> String |> rm_strSpace, split(eincode, "->"))
-    sbefore = String(split(sbefore, "(")[2])
-    @show sbefore, safter
+    parser = Clause('(', ')', SepTwo("->", SepMulti(",", nothing), nothing))
+    parser = string_parse(eincode, parser)
+    from_list, to = analyze_parser(parser)
+    @show from_list, to
+    to_merge = setdiff(reduce((++), map(to_chars, from_list)) |> unique, to_chars(to))
+    @show to_merge
 end
 
 einsum(eincode::String, nsa::NSTensor, nsb::NSTensor) = begin 
@@ -108,6 +123,6 @@ einsum(eincode::String, nsa::NSTensor, nsb::NSTensor) = begin
 end
 
 
-# eincode_parse("(ijk, ikl -> jl)")
+eincode_parse("(ijk, ikl -> jl)")
 
 # Meta.parse("(ijk, ikl) -> jl")
